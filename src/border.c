@@ -437,7 +437,12 @@ void border_hide(struct border* border) {
   if (border->wid) {
     // Just hide the window instead of destroying it to reduce WindowServer interactions
     // The periodic cleanup timer will destroy truly orphaned borders
-    SLSOrderWindow(border->cid, border->wid, 0, 0);
+    CFTypeRef transaction = SLSTransactionCreate(border->cid);
+    if (transaction) {
+      SLSTransactionOrderWindow(transaction, border->wid, 0, 0);
+      SLSTransactionCommit(transaction, 0);
+      CFRelease(transaction);
+    }
   }
   pthread_mutex_unlock(&border->mutex);
 }
