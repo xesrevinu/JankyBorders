@@ -14,10 +14,29 @@ struct settings* border_get_settings(struct border* border) {
 }
 
 static void border_destroy_window(struct border* border) {
-  if (border->context) CGContextRelease(border->context);
-  if (border->wid) SLSReleaseWindow(border->cid, border->wid);
-  border->wid = 0;
-  border->context = NULL;
+  if (border->context) {
+    CGContextRelease(border->context);
+    border->context = NULL;
+  }
+  if (border->wid) {
+    SLSReleaseWindow(border->cid, border->wid);
+    border->wid = 0;
+  }
+}
+
+// Recreate window and context when frame size changes significantly
+static void border_recreate_window_if_needed(struct border* border, CGRect new_frame, struct settings* settings) {
+  if (!border->wid) return;
+
+  // Check if size changed significantly (more than 10 pixels in either dimension)
+  float width_diff = fabs(new_frame.size.width - border->frame.size.width);
+  float height_diff = fabs(new_frame.size.height - border->frame.size.height);
+
+  if (width_diff > 10.0f || height_diff > 10.0f) {
+    // Destroy old window and context to free backing store memory
+    border_destroy_window(border);
+    // Window will be recreated in border_update_internal
+  }
 }
 
 static bool border_check_too_small(struct border* border, CGRect window_frame) {
@@ -227,10 +246,13 @@ void border_update_internal(struct border* border, struct settings* settings) {
   if (!shown && !border->is_proxy) {
     border_hide(border);
     return;
-  } 
+  }
 
   int level = window_level(cid, border->target_wid);
   int sub_level = window_sub_level(cid, border->target_wid);
+
+  // Recreate window if size changed significantly to free old backing store memory
+  border_recreate_window_if_needed(border, frame, settings);
 
   if (!border->wid) {
     border_create_window(border,
@@ -343,6 +365,7 @@ void border_destroy(struct border* border) {
     if (!border->is_proxy && border->cid != SLSMainConnectionID())
       SLSReleaseConnection(border->cid);
     pthread_mutex_unlock(&border->mutex);
+    pthread_mutex_destroy(&border->mutex);
     free(border);
   });
 }

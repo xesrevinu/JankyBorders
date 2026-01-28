@@ -104,6 +104,8 @@ static void space_handler() {
   // Not all native-fullscreen windows have yet updated their space id...
   DELAY_ASYNC_EXEC_ON_MAIN_THREAD(20000, {
     windows_draw_borders_on_current_spaces(&g_windows);
+    // Cleanup orphaned borders when switching spaces
+    windows_cleanup_orphaned_borders(&g_windows);
   });
 }
 

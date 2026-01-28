@@ -374,3 +374,61 @@ void windows_add_existing_windows(struct table* windows) {
   CFRelease(space_list_ref);
   free(space_list);
 }
+
+// Check if a window still exists
+static bool window_exists(int cid, uint32_t wid) {
+  CFArrayRef target_ref = cfarray_of_cfnumbers(&wid,
+                                               sizeof(uint32_t),
+                                               1,
+                                               kCFNumberSInt32Type);
+  if (!target_ref) return false;
+
+  CFTypeRef query = SLSWindowQueryWindows(cid, target_ref, 0x0);
+  bool exists = false;
+  if (query) {
+    CFTypeRef iterator = SLSWindowQueryResultCopyWindows(query);
+    if (iterator && SLSWindowIteratorGetCount(iterator) > 0) {
+      exists = true;
+    }
+    if (iterator) CFRelease(iterator);
+    CFRelease(query);
+  }
+  CFRelease(target_ref);
+  return exists;
+}
+
+// Cleanup orphaned borders whose target windows no longer exist
+void windows_cleanup_orphaned_borders(struct table* windows) {
+  int cid = SLSMainConnectionID();
+  uint32_t orphans[256];
+  int orphan_count = 0;
+
+  // First pass: identify orphaned borders
+  for (int i = 0; i < windows->capacity && orphan_count < 256; ++i) {
+    struct bucket* bucket = windows->buckets[i];
+    while (bucket && orphan_count < 256) {
+      if (bucket->value) {
+        uint32_t wid = *(uint32_t*)bucket->key;
+        if (!window_exists(cid, wid)) {
+          orphans[orphan_count++] = wid;
+          debug("Found orphaned border for window: %d\n", wid);
+        }
+      }
+      bucket = bucket->next;
+    }
+  }
+
+  // Second pass: remove orphaned borders
+  for (int i = 0; i < orphan_count; ++i) {
+    struct border* border = table_find(windows, &orphans[i]);
+    if (border) {
+      table_remove(windows, &orphans[i]);
+      border_destroy(border);
+    }
+  }
+
+  if (orphan_count > 0) {
+    debug("Cleaned up %d orphaned borders\n", orphan_count);
+    windows_update_notifications(windows);
+  }
+}
