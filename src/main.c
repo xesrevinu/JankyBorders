@@ -226,6 +226,19 @@ int main(int argc, char** argv) {
 
   windows_add_existing_windows(&g_windows);
 
+  // Setup periodic cleanup timer (every 60 seconds)
+  CFRunLoopTimerRef cleanup_timer = CFRunLoopTimerCreateWithHandler(
+    kCFAllocatorDefault,
+    CFAbsoluteTimeGetCurrent() + 60.0,  // First fire after 60 seconds
+    60.0,                                // Repeat every 60 seconds
+    0, 0,
+    ^(CFRunLoopTimerRef timer) {
+      windows_cleanup_orphaned_borders(&g_windows);
+    }
+  );
+  CFRunLoopAddTimer(CFRunLoopGetCurrent(), cleanup_timer, kCFRunLoopDefaultMode);
+  CFRelease(cleanup_timer);
+
   mach_server_begin(&g_mach_server, message_handler);
   if (!update_mask) execute_config_file("borders", "bordersrc");
 

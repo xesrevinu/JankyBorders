@@ -323,25 +323,13 @@ void border_update_internal(struct border* border, struct settings* settings) {
   if (disabled_update) SLSReenableUpdate(cid);
 }
 
-static void* border_update_async_proc(void* context) {
-  struct {
-    struct border* border;
-    struct settings settings;
-  }* payload = context;
-
-  pthread_mutex_lock(&payload->border->mutex);
-  border_update_internal(payload->border, &payload->settings);
-  pthread_mutex_unlock(&payload->border->mutex);
-  free(payload);
-  return NULL;
-}
-
 void border_init(struct border* border, int cid) {
   memset(border, 0, sizeof(struct border));
   pthread_mutexattr_t mattr;
   pthread_mutexattr_init(&mattr);
   pthread_mutexattr_settype(&mattr, PTHREAD_MUTEX_RECURSIVE);
   pthread_mutex_init(&border->mutex, &mattr);
+  pthread_mutexattr_destroy(&mattr);  // Clean up mutex attributes after use
   animation_init(&border->animation);
   if (cid) border->cid = cid;
   else border->cid = SLSMainConnectionID();
@@ -415,18 +403,15 @@ void border_update(struct border* border, bool try_async) {
     return;
   }
 
-  struct payload {
-    struct border* border;
-    struct settings settings;
-  }* payload = malloc(sizeof(struct payload));
-
-  payload->border = border;
-  payload->settings = *settings;
-
-  pthread_t thread;
-  pthread_create(&thread, NULL, border_update_async_proc, payload);
-  pthread_detach(thread);
+  // Use dispatch queue instead of creating new threads for better efficiency
+  __block struct settings settings_copy = *settings;
   pthread_mutex_unlock(&border->mutex);
+
+  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    pthread_mutex_lock(&border->mutex);
+    border_update_internal(border, &settings_copy);
+    pthread_mutex_unlock(&border->mutex);
+  });
 }
 
 void border_hide(struct border* border) {
