@@ -24,16 +24,20 @@ static void border_destroy_window(struct border* border) {
   }
 }
 
-// Recreate window and context when frame size changes to free old backing store memory
+// Recreate window and context when frame size changes significantly
+// This balances memory usage with WindowServer interaction frequency
 static void border_recreate_window_if_needed(struct border* border, CGRect new_frame, struct settings* settings) {
   if (!border->wid) return;
 
-  // Always recreate if size changed (any change, not just significant)
-  // This ensures backing store memory is properly released
-  if (!CGSizeEqualToSize(new_frame.size, border->frame.size)) {
-    // Destroy old window and context to free backing store memory
+  // Calculate size difference
+  float width_diff = fabs(new_frame.size.width - border->frame.size.width);
+  float height_diff = fabs(new_frame.size.height - border->frame.size.height);
+
+  // Only recreate if size changed significantly (>50 pixels)
+  // This reduces WindowServer interactions while still managing memory
+  // Smaller changes use SLSSetWindowShape which is more efficient
+  if (width_diff > 50.0f || height_diff > 50.0f) {
     border_destroy_window(border);
-    // Window will be recreated in border_update_internal
   }
 }
 
@@ -431,8 +435,9 @@ void border_update(struct border* border, bool try_async) {
 void border_hide(struct border* border) {
   pthread_mutex_lock(&border->mutex);
   if (border->wid) {
-    // Release window and context to free memory when hidden
-    border_destroy_window(border);
+    // Just hide the window instead of destroying it to reduce WindowServer interactions
+    // The periodic cleanup timer will destroy truly orphaned borders
+    SLSOrderWindow(border->cid, border->wid, 0, 0);
   }
   pthread_mutex_unlock(&border->mutex);
 }
