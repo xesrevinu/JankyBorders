@@ -24,15 +24,13 @@ static void border_destroy_window(struct border* border) {
   }
 }
 
-// Recreate window and context when frame size changes significantly
+// Recreate window and context when frame size changes to free old backing store memory
 static void border_recreate_window_if_needed(struct border* border, CGRect new_frame, struct settings* settings) {
   if (!border->wid) return;
 
-  // Check if size changed significantly (more than 10 pixels in either dimension)
-  float width_diff = fabs(new_frame.size.width - border->frame.size.width);
-  float height_diff = fabs(new_frame.size.height - border->frame.size.height);
-
-  if (width_diff > 10.0f || height_diff > 10.0f) {
+  // Always recreate if size changed (any change, not just significant)
+  // This ensures backing store memory is properly released
+  if (!CGSizeEqualToSize(new_frame.size, border->frame.size)) {
     // Destroy old window and context to free backing store memory
     border_destroy_window(border);
     // Window will be recreated in border_update_internal
@@ -323,6 +321,19 @@ void border_update_internal(struct border* border, struct settings* settings) {
   if (disabled_update) SLSReenableUpdate(cid);
 }
 
+static void* border_update_async_proc(void* context) {
+  struct {
+    struct border* border;
+    struct settings settings;
+  }* payload = context;
+
+  pthread_mutex_lock(&payload->border->mutex);
+  border_update_internal(payload->border, &payload->settings);
+  pthread_mutex_unlock(&payload->border->mutex);
+  free(payload);
+  return NULL;
+}
+
 void border_init(struct border* border, int cid) {
   memset(border, 0, sizeof(struct border));
   pthread_mutexattr_t mattr;
@@ -403,29 +414,25 @@ void border_update(struct border* border, bool try_async) {
     return;
   }
 
-  // Use dispatch queue instead of creating new threads for better efficiency
-  __block struct settings settings_copy = *settings;
-  pthread_mutex_unlock(&border->mutex);
+  struct payload {
+    struct border* border;
+    struct settings settings;
+  }* payload = malloc(sizeof(struct payload));
 
-  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-    pthread_mutex_lock(&border->mutex);
-    border_update_internal(border, &settings_copy);
-    pthread_mutex_unlock(&border->mutex);
-  });
+  payload->border = border;
+  payload->settings = *settings;
+
+  pthread_t thread;
+  pthread_create(&thread, NULL, border_update_async_proc, payload);
+  pthread_detach(thread);
+  pthread_mutex_unlock(&border->mutex);
 }
 
 void border_hide(struct border* border) {
   pthread_mutex_lock(&border->mutex);
   if (border->wid) {
-    CFTypeRef transaction = SLSTransactionCreate(border->cid);
-    if (transaction) {
-      SLSTransactionOrderWindow(transaction,
-                                border->wid,
-                                0,
-                                border->target_wid);
-      SLSTransactionCommit(transaction, 0);
-      CFRelease(transaction);
-    }
+    // Release window and context to free memory when hidden
+    border_destroy_window(border);
   }
   pthread_mutex_unlock(&border->mutex);
 }
